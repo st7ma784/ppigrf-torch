@@ -17,7 +17,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setuptools.setup(
     name="ppigrf",
-    version="1.1.0",
+    version="2.0.0-alpha",
     author="Karl Laundal",
     author_email="readme@file.md",
     description="Pure Python IGRF",
@@ -34,7 +34,7 @@ setuptools.setup(
         'pandas>=1.3.5'
     ],
     package_dir={"": "src"},
-    package_data={'':['IGRF13.shc']},
+    package_data={'':['IGRF13.shc', 'IGRF14.shc']},
     packages=setuptools.find_packages(where="src"),
     python_requires=">=3.6",
 )
