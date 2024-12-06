@@ -143,6 +143,7 @@ def yearfrac_to_datetime(fracyear):
  
     # adding them produces the datetime:
     return (start_year + delta_year).to_pydatetime()
+import torch
 
 
 def get_legendre(theta, keys):
@@ -150,7 +151,7 @@ def get_legendre(theta, keys):
     Calculate Schmidt semi-normalized associated Legendre functions
 
     Calculations based on recursive algorithm found in "Spacecraft Attitude Determination and Control" by James Richard Wertz
-    
+
     Parameters
     ----------
     theta : array
@@ -226,7 +227,127 @@ def get_legendre(theta, keys):
     return Pmat, dPmat    
 
 
+
+def my_get_legendre(theta, keys):
+    """ 
+    Calculate Schmidt semi-normalized associated Legendre functions
+
+    Calculations based on recursive algorithm found in "Spacecraft Attitude Determination and Control" by James Richard Wertz
+    
+    Parameters
+    ----------
+    theta : array
+        Array of colatitudes in degrees
+    keys: iterable
+        list of spherical harmnoic degree and order, tuple (n, m) for each 
+        term in the expansion
+
+    Returns
+    -------
+    P : array 
+        Array of Legendre functions, with shape (theta.size, len(keys)). 
+    dP : array
+        Array of dP/dtheta, with shape (theta.size, len(keys))
+    """
+
+    # get maximum N and maximum M:
+    # n, m = np.array([k for k in keys]).T
+    n,m=zip(*keys)
+    n=np.array(n)
+    m=np.array(m)
+    nmax, mmax = np.max(n), np.max(m)
+
+    
+    # # initialize the functions:
+    # for n in range(nmax +1):
+    #     for m in range(nmax + 1):
+    #         P[n, m] = np.zeros_like(theta, dtype = np.float64)
+    #         dP[n, m] = np.zeros_like(theta, dtype = np.float64)
+    theta = theta.flatten()[:, np.newaxis]
+    theta_rad = np.radians(theta)
+
+    P = torch.zeros((nmax + 1, mmax + 1, theta.size), dtype = torch.float64)
+    dP = torch.zeros((nmax + 1, mmax + 1, theta.size), dtype = torch.float64)
+
+    sinth = np.sin(theta_rad)
+    costh = np.cos(theta_rad)
+
+    # Initialize Schmidt normalization
+    S = torch.zeros((nmax + 1, mmax + 1), dtype = torch.float64)
+    S[0, 0] = 1.
+
+
+    P[0, 0] = np.ones_like(theta, dtype = np.float64)
+
+    '''
+
+    P[0, 0] = np.ones_like(theta, dtype = np.float64)
+    for n in range(1, nmax +1):
+        for m in range(0, min([n + 1, mmax + 1])):
+            # do the legendre polynomials and derivatives
+            if n == m:
+                #this
+                P[n, n]  = sinth * P[n - 1, m - 1]
+                dP[n, n] = sinth * dP[n - 1, m - 1] + costh * P[n - 1, n - 1]
+            else:
+
+                if n == 1:
+                    Knm = 0.
+                    P[n, m]  = costh * P[n -1, m]
+                    dP[n, m] = costh * dP[n - 1, m] - sinth * P[n - 1, m]
+
+                elif n > 1:
+                    Knm = ((n - 1)**2 - m**2) / ((2*n - 1)*(2*n - 3))
+                    P[n, m]  = costh * P[n -1, m] - Knm*P[n - 2, m]
+                    dP[n, m] = costh * dP[n - 1, m] - sinth * P[n - 1, m] - Knm * dP[n - 2, m]
+
+            # compute Schmidt normalization
+            if m == 0:
+                S[n, 0] = S[n - 1, 0] * (2.*n - 1)/n
+            else:
+                S[n, m] = S[n, m - 1] * np.sqrt((n - m + 1)*(int(m == 1) + 1.)/(n + m))
+    '''
+    Knm = 0.
+    P[1]  = costh * P[0]  #to do... remove this as its times by 1
+    dP[1] = costh * dP[0] - sinth * P[0] #remove this as its times by 1s
+    nrange=torch.arange(1,nmax+1).unsqueeze(1)
+    mrange=torch.arange(0,mmax+1).unsqueeze(0)
+    Knmsgrid=torch.zeros((nmax + 1, mmax + 1), dtype = torch.float64)
+    Knmsgrid[0] = 0
+    Knmsgrid[1:] = ((nrange - 1).pow(2) - mrange.pow(2)) / ((2*nrange - 1)*(2*nrange - 3))
+    S[:, 0] = S[:, 0] * ((2* (nrange - 1))/nrange).pow(nrange)
+
+    for n in range(1, nmax +1):
+        #this is the recursive formula for P[n, n]
+
+        Knm = Knmsgrid[n]
+        P[n]  = costh * P[n -1] - (Knmsgrid[n]*P[n - 2])
+        dP[n] = costh * dP[n - 1] - sinth * P[n - 1] - (Knm * dP[n - 2])
+        P[n, n]  = sinth * P[n - 1, n - 1]
+        dP[n, n] = sinth * dP[n - 1, n - 1] + costh * P[n - 1, n - 1]
+
+        for m in range(1, min([n + 1, mmax + 1])):        #to do ,move this outside the loop surely? 
+            # do the legendre polynomials and derivatives
+            S[n, m] = S[n, m - 1] * np.sqrt((n - m + 1)*(int(m == 1) + 1.)/(n + m))
+
+
+    # now apply Schmidt normalization
+    P=torch.mul(P,S.unsqueeze(2))
+    dP=torch.mul(dP,S.unsqueeze(2))
+
+
+    # Pmat  = np.hstack(tuple(P[key] for key in keys))
+    # dPmat = np.hstack(tuple(dP[key] for key in keys)) 
+    Pmat=P.reshape(len(keys),-1).T
+    dPmat=dP.reshape(len(keys),-1).T
+    return Pmat, dPmat    
+
+hdf=None
+gdf=None
+
 def read_shc(filename = shc_fn):
+    global hdf
+    global gdf
     """ 
     Read .shc (spherical harmonic coefficient) file
 
@@ -253,38 +374,39 @@ def read_shc(filename = shc_fn):
     coefficients. This must be done prior to this code (when making the 
     .shc file).
     """
+    if hdf is not None and gdf is not None:
+            
+        header = 2
+        coeffdict = {}
+        with open(filename, 'r') as f:
+            for line in f.readlines():
 
-    header = 2
-    coeffdict = {}
-    with open(filename, 'r') as f:
-        for line in f.readlines():
+                if line.startswith('#'): # this is a header that we don't read
+                    continue
 
-            if line.startswith('#'): # this is a header that we don't read
-                continue
+                if header == 2: # read parameters (could be skipped...)
+                    N_MIN, N_MAX, NTIMES, SP_ORDER, N_STEPS = list(map(int, line.split()[:5]))
+                    header -= 1
+                    continue
 
-            if header == 2: # read parameters (could be skipped...)
-                 N_MIN, N_MAX, NTIMES, SP_ORDER, N_STEPS = list(map(int, line.split()[:5]))
-                 header -= 1
-                 continue
+                if header == 1: # read years
+                    times = yearfrac_to_datetime(list(map(float, line.split())) )
+                    header -= 1
+                    continue
 
-            if header == 1: # read years
-                 times = yearfrac_to_datetime(list(map(float, line.split())) )
-                 header -= 1
-                 continue
+                key = tuple(map(int, line.split()[:2]))
+                coeffdict[key] = np.array(list(map(float, line.split()[2:])))
 
-            key = tuple(map(int, line.split()[:2]))
-            coeffdict[key] = np.array(list(map(float, line.split()[2:])))
+        g = {key:coeffdict[key] for key in coeffdict.keys() if key[1] >= 0}
+        h = {(key[0], -key[1]):coeffdict[key] for key in coeffdict.keys() if key[1] < 0 }
+        for key in [k for k in g.keys() if k[1] == 0]: # add zero coefficients for m = 0 in h dictionary
+            h[key] = 0
 
-    g = {key:coeffdict[key] for key in coeffdict.keys() if key[1] >= 0}
-    h = {(key[0], -key[1]):coeffdict[key] for key in coeffdict.keys() if key[1] < 0 }
-    for key in [k for k in g.keys() if k[1] == 0]: # add zero coefficients for m = 0 in h dictionary
-        h[key] = 0
+        # this must be true:
+        assert len(g.keys()) == len(h.keys())
 
-    # this must be true:
-    assert len(g.keys()) == len(h.keys())
-
-    gdf = pd.DataFrame(g, index = times)
-    hdf = pd.DataFrame(h, index = times)
+        gdf = pd.DataFrame(g, index = times)
+        hdf = pd.DataFrame(h, index = times)
 
     # make sure that the column keys of h are in same order as in g:
     hdf = hdf[gdf.columns]
@@ -497,15 +619,24 @@ def igrf_gc(r, theta, phi, date, coeff_fn = shc_fn):
     r, theta, phi = map(lambda x: x.flatten().reshape((-1 ,1)), [r, theta, phi]) # column vectors
 
     # make row vectors of wave numbers n and m:
-    n, m = np.array([k for k in g.columns]).T
-    n, m = n.reshape((1, -1)), m.reshape((1, -1))
-
+    # n, m = np.array([k for k in g.columns]).T
+    # n, m = n.reshape((1, -1)), m.reshape((1, -1))
+    n,m =zip(*g.columns)
+    n=np.array(n).reshape(1,-1)
+    m=np.array(m).reshape(1,-1)
     # get maximum N and maximum M:
     N, M = np.max(n), np.max(m)
 
     # get the legendre functions
+    import time
+    start = time.time()
     P, dP = get_legendre(theta, g.keys())
-
+    print('get_legendre time:', time.time() - start)
+    start = time.time()
+    P, dP = my_get_legendre(theta, g.keys())
+    print('my_get_legendre time:', time.time() - start)
+    assert np.allclose(P, P)
+    assert np.allclose(dP, dP)
     # Append coefficients at desired times (skip if index is already in coefficient data frame):
     index = g.index.union(date)
 
