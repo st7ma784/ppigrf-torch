@@ -643,7 +643,7 @@ def igrf_gc(r, theta, phi, date, coeff_fn = shc_fn):
     my_P, my_dP = my_get_legendre(theta, g.keys())
     print('my_get_legendre time:', time.time() - start)
 
-        #plot with imshow to see if the values are correct
+    #plot with imshow to see if the values are correct
 
     
     # assert np.allclose(P, my_P)
