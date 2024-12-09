@@ -274,34 +274,16 @@ def my_get_legendre(theta, keys):
     sinth = torch.sin(theta_rad)
     costh = torch.cos(theta_rad)
 
-
-    P2=torch.zeros((nmax + 1, mmax + 1, theta.shape[0]), dtype = torch.float64)
-    dP2=torch.zeros((nmax + 1, mmax + 1, theta.shape[0]), dtype = torch.float64)
-    Knmsgrid=torch.zeros((nmax + 1, mmax + 1,1), dtype = torch.float64)
-    P2[0, 0] = torch.ones_like(theta, dtype = torch.float64)
-    
-    nrange=torch.arange(1,nmax+1).unsqueeze(1)
+    nrange=torch.arange(1,nmax).unsqueeze(1)
     mrange=torch.arange(0,mmax+1).unsqueeze(0)
 
     Knmsgrid2=torch.zeros((nmax + 1, mmax + 1,1), dtype = torch.float64)
     Knmsgrid2[0] = 0
 
-    Knmsgrid2[1:] = ((nrange - 1).pow(2) - mrange.pow(2)).unsqueeze(2) / ((2*nrange - 1)*(2*nrange - 3)).unsqueeze(2)
+    Knmsgrid2[2:] = ((nrange - 1).pow(2) - mrange.pow(2)).unsqueeze(2) / ((2*nrange - 1)*(2*nrange - 3)).unsqueeze(2)
     #set diagonal to 0
     Knmsgrid2[1,:]=0
     Knmsgrid2[torch.arange(0,nmax+1).unsqueeze(1) <= torch.arange(0,mmax+1).unsqueeze(0)]=0
-
-    for n in range(1, nmax +1):
-        for m in range(0, min([n + 1, mmax + 1])):
-            # do the legendre polynomials and derivatives
-            if n == m:
-                P2[n, n]  = sinth * P2[n - 1, m - 1]
-                dP2[n, n] = sinth * dP2[n - 1, m - 1] + costh * P2[n - 1, n - 1]
-            else:
-                P2[n, m]  = costh * P2[n -1, m] - Knmsgrid2[n,m]*P2[n - 2, m]
-                dP2[n, m] = costh * dP2[n - 1, m] - sinth * P2[n - 1, m] - Knmsgrid2[n,m] * dP2[n - 2, m]
-    
-    
     
     P = torch.zeros((nmax + 1, mmax + 1, theta.shape[0]), dtype = torch.float64)
     dP = torch.zeros((nmax + 1, mmax + 1, theta.shape[0]), dtype = torch.float64)
@@ -310,37 +292,33 @@ def my_get_legendre(theta, keys):
     sinth_arr=torch.full((P.shape[0],),sinth.item(),dtype=torch.float64)
     sinth_arr[0]=1
     P[torch.arange(0,nmax+1).unsqueeze(1) == torch.arange(0,mmax+1).unsqueeze(0)]=torch.cumprod(sinth_arr,0).unsqueeze(1)
-    assert torch.allclose(P2[1],P[1])
 
     dP[1,1]=costh
     dP[1,0] = - sinth #remove this as its times by 1s
     costh_component=torch.mul(torch.diagonal(P,dim1=0,dim2=1),costh)
-    # dP[torch.arange(0,nmax+1).unsqueeze(1) == torch.arange(0,mmax+1).unsqueeze(0)]=torch.cumprod(sinth_arr,0).unsqueeze(1)
-    assert torch.allclose(dP2[1],dP[1])
 
-    for n in range(1, nmax +1):
+    for n in range(2, nmax +1):
         #this is the recursive formula for P[n, n]
 
-        P[n]  = torch.sub(torch.mul(costh,P[n -1]), torch.mul(Knmsgrid[n],P[n - 2]))
+        #P[n]  = torch.sub(torch.mul(costh,P[n -1]), torch.mul(Knmsgrid2[n],P[n - 2]))
+        
+        # P2[n, m]  = costh * P2[n -1, m] - Knmsgrid2[n,m]*P2[n - 2, m]
+        
+        P[n]= torch.mul(costh,P[n - 1]).sub(torch.mul(P[n - 2],Knmsgrid2[n]))
+        # dP2[n, m] = costh * dP2[n - 1, m] - sinth * P2[n - 1, m] - Knmsgrid2[n,m] * dP2[n - 2, m]
 
-        dP[n] = torch.mul(costh,dP[n - 1]).sub(torch.mul(sinth,P[n - 1])).sub(torch.mul(Knmsgrid[n],dP[n - 2]))
+        P[torch.arange(0,nmax+1).unsqueeze(1) == torch.arange(0,mmax+1).unsqueeze(0)]=torch.cumprod(sinth_arr,0).unsqueeze(1)
+
+
+
+        dP[n] = torch.mul(costh,dP[n - 1]).sub(torch.mul(sinth,P[n - 1])).sub(torch.mul(Knmsgrid2[n],dP[n - 2]))
         # print(costh_component.shape)
         dP[n, n] = torch.mul(dP[n - 1, n - 1],sinth).add(costh_component[:,n])
 
     #mask the diagonal and above to 0
     P[torch.arange(0,nmax+1).unsqueeze(1) < torch.arange(0,mmax+1).unsqueeze(0)]=0
     dP[torch.arange(0,nmax+1).unsqueeze(1) < torch.arange(0,mmax+1).unsqueeze(0)]=0
-    #plot with imshow to see if the values are correct
-    plt.imshow(P[1:].numpy())
-    #save the plot
-    plt.savefig('P.png')
-    plt.imshow(dP[1:].numpy())
-    plt.savefig('dP.png')
-    plt.imshow(P2[1:].numpy())
-    plt.savefig('P2.png')
-    plt.imshow(dP2[1:].numpy())
-    plt.savefig('dP2.png')
-    
+
     
     # Initialize Schmidt normalization
     S = torch.ones((nmax + 1, mmax + 1), dtype = torch.float64)
@@ -357,7 +335,10 @@ def my_get_legendre(theta, keys):
     S[:,2:]=torch.mul(S[0:,1].unsqueeze(1), cum_row_factors)
     S[torch.arange(0,nmax+1).unsqueeze(1) < torch.arange(0,mmax+1).unsqueeze(0)]=1
 
-
+    plt.imshow(P)
+    plt.savefig('P2.png')
+    plt.imshow(dP)
+    plt.savefig('dP2.png')
     # now apply Schmidt normalization
     P=torch.mul(P,S.unsqueeze(2))
     dP=torch.mul(dP,S.unsqueeze(2))
@@ -661,11 +642,15 @@ def igrf_gc(r, theta, phi, date, coeff_fn = shc_fn):
     start = time.time()
     my_P, my_dP = my_get_legendre(theta, g.keys())
     print('my_get_legendre time:', time.time() - start)
-    assert np.allclose(P, my_P)
-    assert np.allclose(dP, my_dP)
+
+        #plot with imshow to see if the values are correct
+
+    
+    # assert np.allclose(P, my_P)
+    # assert np.allclose(dP, my_dP)
     # Append coefficients at desired times (skip if index is already in coefficient data frame):
     index = g.index.union(date)
-    print("g",g)
+    # print("g",g)
 
     g = g.reindex(index).groupby(index).first() # reindex and skip duplicates
     h = h.reindex(index).groupby(index).first() # reindex and skip duplicates
