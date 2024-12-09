@@ -75,6 +75,8 @@ igrf                 - Calculate IGRF model values (geodetic input/output)
 import numpy as np
 import pandas as pd
 import os
+import torch
+import matplotlib.pyplot as plt
 
 basepath = os.path.dirname(__file__)
 shc_fn = basepath + '/IGRF14.shc' # Default shc file
@@ -252,10 +254,12 @@ def my_get_legendre(theta, keys):
 
     # get maximum N and maximum M:
     # n, m = np.array([k for k in keys]).T
-    n,m=zip(*keys)
-    n=np.array(n)
-    m=np.array(m)
-    nmax, mmax = np.max(n), np.max(m)
+    kn,km=zip(*keys)
+    kn=torch.tensor(kn)
+    km=torch.tensor(km)
+    nmax=torch.max(kn)
+    mmax=torch.max(km)
+    # nmax, mmax = np.max(n), np.max(m)
 
     
     # # initialize the functions:
@@ -263,91 +267,112 @@ def my_get_legendre(theta, keys):
     #     for m in range(nmax + 1):
     #         P[n, m] = np.zeros_like(theta, dtype = np.float64)
     #         dP[n, m] = np.zeros_like(theta, dtype = np.float64)
-    theta = theta.flatten()[:, np.newaxis]
-    theta_rad = np.radians(theta)
-
-    P = torch.zeros((nmax + 1, mmax + 1, theta.size), dtype = torch.float64)
-    dP = torch.zeros((nmax + 1, mmax + 1, theta.size), dtype = torch.float64)
-
-    sinth = np.sin(theta_rad)
-    costh = np.cos(theta_rad)
-
-    # Initialize Schmidt normalization
-    S = torch.zeros((nmax + 1, mmax + 1), dtype = torch.float64)
-    S[0, 0] = 1.
+    theta = theta.flatten() #[:, np.newaxis]
+    #convert np array to torch tensor
+    theta = torch.tensor(theta)
+    theta_rad = torch.deg2rad(theta)
+    sinth = torch.sin(theta_rad)
+    costh = torch.cos(theta_rad)
 
 
-    P[0, 0] = np.ones_like(theta, dtype = np.float64)
+    P2=torch.zeros((nmax + 1, mmax + 1, theta.shape[0]), dtype = torch.float64)
+    dP2=torch.zeros((nmax + 1, mmax + 1, theta.shape[0]), dtype = torch.float64)
+    Knmsgrid=torch.zeros((nmax + 1, mmax + 1,1), dtype = torch.float64)
+    P2[0, 0] = torch.ones_like(theta, dtype = torch.float64)
+    
+    nrange=torch.arange(1,nmax+1).unsqueeze(1)
+    mrange=torch.arange(0,mmax+1).unsqueeze(0)
 
-    '''
+    Knmsgrid2=torch.zeros((nmax + 1, mmax + 1,1), dtype = torch.float64)
+    Knmsgrid2[0] = 0
 
-    P[0, 0] = np.ones_like(theta, dtype = np.float64)
+    Knmsgrid2[1:] = ((nrange - 1).pow(2) - mrange.pow(2)).unsqueeze(2) / ((2*nrange - 1)*(2*nrange - 3)).unsqueeze(2)
+    #set diagonal to 0
+    Knmsgrid2[1,:]=0
+    Knmsgrid2[torch.arange(0,nmax+1).unsqueeze(1) <= torch.arange(0,mmax+1).unsqueeze(0)]=0
+
     for n in range(1, nmax +1):
         for m in range(0, min([n + 1, mmax + 1])):
             # do the legendre polynomials and derivatives
             if n == m:
-                #this
-                P[n, n]  = sinth * P[n - 1, m - 1]
-                dP[n, n] = sinth * dP[n - 1, m - 1] + costh * P[n - 1, n - 1]
+                P2[n, n]  = sinth * P2[n - 1, m - 1]
+                dP2[n, n] = sinth * dP2[n - 1, m - 1] + costh * P2[n - 1, n - 1]
             else:
-
-                if n == 1:
-                    Knm = 0.
-                    P[n, m]  = costh * P[n -1, m]
-                    dP[n, m] = costh * dP[n - 1, m] - sinth * P[n - 1, m]
-
-                elif n > 1:
-                    Knm = ((n - 1)**2 - m**2) / ((2*n - 1)*(2*n - 3))
-                    P[n, m]  = costh * P[n -1, m] - Knm*P[n - 2, m]
-                    dP[n, m] = costh * dP[n - 1, m] - sinth * P[n - 1, m] - Knm * dP[n - 2, m]
-
-            # compute Schmidt normalization
-            if m == 0:
-                S[n, 0] = S[n - 1, 0] * (2.*n - 1)/n
-            else:
-                S[n, m] = S[n, m - 1] * np.sqrt((n - m + 1)*(int(m == 1) + 1.)/(n + m))
-    '''
-    Knm = 0.
-    P[1]  = costh * P[0]  #to do... remove this as its times by 1
-    dP[1] = costh * dP[0] - sinth * P[0] #remove this as its times by 1s
-    nrange=torch.arange(1,nmax+1).unsqueeze(1)
-    mrange=torch.arange(0,mmax+1).unsqueeze(0)
-    Knmsgrid=torch.zeros((nmax + 1, mmax + 1), dtype = torch.float64)
-    Knmsgrid[0] = 0
-    Knmsgrid[1:] = ((nrange - 1).pow(2) - mrange.pow(2)) / ((2*nrange - 1)*(2*nrange - 3))
-    S[:, 0] = S[:, 0] * ((2* (nrange - 1))/nrange).pow(nrange)
+                P2[n, m]  = costh * P2[n -1, m] - Knmsgrid[n,m]*P2[n - 2, m]
+                dP2[n, m] = costh * dP2[n - 1, m] - sinth * P2[n - 1, m] - Knmsgrid[n,m] * dP2[n - 2, m]
+    
+    
+    
+    P = torch.zeros((nmax + 1, mmax + 1, theta.shape[0]), dtype = torch.float64)
+    dP = torch.zeros((nmax + 1, mmax + 1, theta.shape[0]), dtype = torch.float64)
+  
+    P[1,0]  = costh   #to do... remove this as its times by 1#
+    sinth_arr=torch.full((P.shape[0],),sinth.item(),dtype=torch.float64)
+    sinth_arr[0]=1
+    P[torch.arange(0,nmax+1).unsqueeze(1) == torch.arange(0,mmax+1).unsqueeze(0)]=torch.cumprod(sinth_arr,0).unsqueeze(1)
+    assert torch.allclose(P2[1],P[1])
+    
+    dP[1,1]=costh
+    dP[1,0] = - sinth #remove this as its times by 1s
+    costh_component=torch.mul(torch.diagonal(P,dim1=0,dim2=1),costh)
+    # dP[torch.arange(0,nmax+1).unsqueeze(1) == torch.arange(0,mmax+1).unsqueeze(0)]=torch.cumprod(sinth_arr,0).unsqueeze(1)
+    assert torch.allclose(dP2[1],dP[1])
 
     for n in range(1, nmax +1):
         #this is the recursive formula for P[n, n]
 
-        Knm = Knmsgrid[n]
-        P[n]  = costh * P[n -1] - (Knmsgrid[n]*P[n - 2])
-        dP[n] = costh * dP[n - 1] - sinth * P[n - 1] - (Knm * dP[n - 2])
-        P[n, n]  = sinth * P[n - 1, n - 1]
-        dP[n, n] = sinth * dP[n - 1, n - 1] + costh * P[n - 1, n - 1]
+        P[n]  = torch.sub(torch.mul(costh,P[n -1]), torch.mul(Knmsgrid[n],P[n - 2]))
 
-        for m in range(1, min([n + 1, mmax + 1])):        #to do ,move this outside the loop surely? 
-            # do the legendre polynomials and derivatives
-            S[n, m] = S[n, m - 1] * np.sqrt((n - m + 1)*(int(m == 1) + 1.)/(n + m))
+        dP[n] = torch.mul(costh,dP[n - 1]).sub(torch.mul(sinth,P[n - 1])).sub(torch.mul(Knmsgrid[n],dP[n - 2]))
+        # print(costh_component.shape)
+        dP[n, n] = torch.mul(dP[n - 1, n - 1],sinth).add(costh_component[:,n])
+
+    #mask the diagonal and above to 0
+    P[torch.arange(0,nmax+1).unsqueeze(1) < torch.arange(0,mmax+1).unsqueeze(0)]=0
+    dP[torch.arange(0,nmax+1).unsqueeze(1) < torch.arange(0,mmax+1).unsqueeze(0)]=0
+    #plot with imshow to see if the values are correct
+    plt.imshow(P[1:].numpy())
+    #save the plot
+    plt.savefig('P.png')
+    plt.imshow(dP[1:].numpy())
+    plt.savefig('dP.png')
+    plt.imshow(P2[1:].numpy())
+    plt.savefig('P2.png')
+    plt.imshow(dP2[1:].numpy())
+    plt.savefig('dP2.png')
+    
+    
+    # Initialize Schmidt normalization
+    S = torch.ones((nmax + 1, mmax + 1), dtype = torch.float64)
+    seq=torch.arange(1,S.shape[0])
+    factor_prod=torch.cumprod((torch.sub(seq.mul(2),1)/ seq),0)
+    S[1:, 0] = S[0, 0] * factor_prod
+    S[1:,1]=torch.mul(S[1:,0],torch.sqrt(torch.div(torch.mul(seq,2),(seq + 1))))
+    nrange=torch.arange(0,nmax+1,dtype=torch.float64).unsqueeze(1)
+    mrange=torch.arange(0,mmax+1,dtype=torch.float64).unsqueeze(0)
+    # np.sqrt((n - m + 1)/(n + m))
+    row_factors=torch.sqrt(torch.div(torch.sub(nrange.add(1),mrange),torch.add(nrange,mrange)))
+    row_factors[torch.arange(0,nmax+1).unsqueeze(1) < torch.arange(0,mmax+1).unsqueeze(0)]=1
+    cum_row_factors=torch.cumprod(row_factors[:,2:],1)
+    S[:,2:]=torch.mul(S[0:,1].unsqueeze(1), cum_row_factors)
+    S[torch.arange(0,nmax+1).unsqueeze(1) < torch.arange(0,mmax+1).unsqueeze(0)]=1
 
 
     # now apply Schmidt normalization
     P=torch.mul(P,S.unsqueeze(2))
     dP=torch.mul(dP,S.unsqueeze(2))
-
-
-    # Pmat  = np.hstack(tuple(P[key] for key in keys))
-    # dPmat = np.hstack(tuple(dP[key] for key in keys)) 
-    Pmat=P.reshape(len(keys),-1).T
-    dPmat=dP.reshape(len(keys),-1).T
+    Pmat=P[kn,km].reshape(len(keys),-1).T
+    dPmat=dP[kn,km].reshape(len(keys),-1).T
     return Pmat, dPmat    
 
 hdf=None
 gdf=None
-
+g=None
+h=None
 def read_shc(filename = shc_fn):
     global hdf
     global gdf
+
     """ 
     Read .shc (spherical harmonic coefficient) file
 
@@ -374,7 +399,7 @@ def read_shc(filename = shc_fn):
     coefficients. This must be done prior to this code (when making the 
     .shc file).
     """
-    if hdf is not None and gdf is not None:
+    if hdf is None or gdf is None:
             
         header = 2
         coeffdict = {}
@@ -565,6 +590,7 @@ def geoc2geod(theta, r, B_th, B_r):
 
 
 def igrf_gc(r, theta, phi, date, coeff_fn = shc_fn):
+    global g, h
     """
     Calculate IGRF model components
 
@@ -600,10 +626,10 @@ def igrf_gc(r, theta, phi, date, coeff_fn = shc_fn):
     Bphi : array
         Magnetic field [nT] in eastward direction
     """
-
-    # read coefficient file:
-    g, h = read_shc(coeff_fn)
-
+    if g is None or h is None:
+        g, h = read_shc(coeff_fn)
+        # read coefficient file:
+        print('Reading spherical harmonic coefficients from {}'.format(coeff_fn))
     if not hasattr(date, '__iter__'):
         date = np.array([date])
     else:
@@ -633,12 +659,13 @@ def igrf_gc(r, theta, phi, date, coeff_fn = shc_fn):
     P, dP = get_legendre(theta, g.keys())
     print('get_legendre time:', time.time() - start)
     start = time.time()
-    P, dP = my_get_legendre(theta, g.keys())
+    my_P, my_dP = my_get_legendre(theta, g.keys())
     print('my_get_legendre time:', time.time() - start)
-    assert np.allclose(P, P)
-    assert np.allclose(dP, dP)
+    assert np.allclose(P, my_P)
+    assert np.allclose(dP, my_dP)
     # Append coefficients at desired times (skip if index is already in coefficient data frame):
     index = g.index.union(date)
+    print("g",g)
 
     g = g.reindex(index).groupby(index).first() # reindex and skip duplicates
     h = h.reindex(index).groupby(index).first() # reindex and skip duplicates
@@ -734,6 +761,7 @@ def igrf(lon, lat, h, date, coeff_fn = shc_fn):
 
 
 def igrf_V(r, theta, phi, date, coeff_fn = shc_fn):
+    global g, h
     """
     Calculate IGRF magnetic potential
 
@@ -766,7 +794,8 @@ def igrf_V(r, theta, phi, date, coeff_fn = shc_fn):
     """
 
     # read coefficient file:
-    g, h = read_shc(coeff_fn)
+    if g is None and h is None:
+        g, h = read_shc(coeff_fn)
 
     if not hasattr(date, '__iter__'):
         date = np.array([date])
