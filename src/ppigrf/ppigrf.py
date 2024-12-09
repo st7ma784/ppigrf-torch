@@ -298,8 +298,8 @@ def my_get_legendre(theta, keys):
                 P2[n, n]  = sinth * P2[n - 1, m - 1]
                 dP2[n, n] = sinth * dP2[n - 1, m - 1] + costh * P2[n - 1, n - 1]
             else:
-                P2[n, m]  = costh * P2[n -1, m] - Knmsgrid[n,m]*P2[n - 2, m]
-                dP2[n, m] = costh * dP2[n - 1, m] - sinth * P2[n - 1, m] - Knmsgrid[n,m] * dP2[n - 2, m]
+                P2[n, m]  = costh * P2[n -1, m] - Knmsgrid2[n,m]*P2[n - 2, m]
+                dP2[n, m] = costh * dP2[n - 1, m] - sinth * P2[n - 1, m] - Knmsgrid2[n,m] * dP2[n - 2, m]
     
     
     
@@ -311,7 +311,7 @@ def my_get_legendre(theta, keys):
     sinth_arr[0]=1
     P[torch.arange(0,nmax+1).unsqueeze(1) == torch.arange(0,mmax+1).unsqueeze(0)]=torch.cumprod(sinth_arr,0).unsqueeze(1)
     assert torch.allclose(P2[1],P[1])
-    
+
     dP[1,1]=costh
     dP[1,0] = - sinth #remove this as its times by 1s
     costh_component=torch.mul(torch.diagonal(P,dim1=0,dim2=1),costh)
